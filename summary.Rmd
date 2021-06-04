@@ -1,0 +1,71 @@
+---
+title: "Shedd Bahamas coral samples"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+```
+
+```{r}
+db <- read_csv("shedd_coral_db.csv")
+```
+
+```{r}
+bah <- db %>%
+  filter(region != "SH")
+```
+
+```{r}
+spsumm <- bah %>%
+  count(genus, species, region) %>%
+  pivot_wider(names_from = region, values_from = n, values_fill = list(n = 0)) %>%
+  mutate(total = rowSums(select(., -genus, -species), na.rm = T)) %>%
+  arrange(genus, species) 
+  
+knitr::kable(spsumm)
+```
+
+```{r}
+bah %>%
+  filter(species == "faveolata") %>%
+  ggplot(aes(x = colony_depth_m)) + geom_histogram()
+```
+
+
+
+```{r}
+# Get list of all samples from past trips currently in Bahamas to be exported
+bah %>%
+  filter(sample_location %in% c("Bimini", "Nassau")) %>%
+  count(genus, species) %>%
+  arrange(-n) %>%
+  write_csv("~/Documents/Permits/2021/stockpile_to_export.csv")
+```
+
+```{r}
+# Get list of samples from Oct. 2019 trip for estimating Jun 2021 collections
+wild_colony_request_Jun2021 <- bah %>%
+  filter(date_sampled > "2019-10-01", date_sampled < "2019-10-31") %>%
+  count(genus, species) %>%
+  arrange(-n)
+
+write_csv(wild_colony_request_Jun2021, path = "~/Documents/Permits/2021/wild_colony_request_Jun2021.csv")
+```
+
+```{r}
+# Get current highest number from each region
+bah %>%
+  mutate(prefix = str_sub(sample_id, 1, 2)) %>%
+  group_by(prefix) %>%
+  mutate(snum = extract_numeric(sample_id)) %>%
+  summarize(highest = max(snum, na.rm = TRUE))
+
+ex <- bah %>%
+  filter(region == "EX") %>%
+  arrange(sample_id)
+  
+```
+

@@ -1,0 +1,135 @@
+---
+title: "Tidy DB"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(parzer)  # install.packages("parzer")
+```
+
+```{r}
+# Import data
+db <- read_xlsx("data/20200901_sample_database.xlsx") %>%
+  clean_names()
+
+db <- db %>%
+  mutate(sample_note1 = case_when(sp_code == "NOSAMPLEINBAG" ~ "no sample in bag",
+                                  TRUE ~ sample_note1))
+```
+
+```{r}
+# Tidy dates
+db <- db %>%
+  mutate(date_sampled = as.Date(date_sampled))
+```
+
+```{r}
+# Tidy sample IDs
+db <- db %>%
+  mutate(re = str_sub(sample_id, 1, 2),
+         no = as.numeric(str_extract(sample_id, "[0-9]+")),
+         no2 = str_pad(no, 4, pad = "0")) %>%
+  unite(sample_id, re, no2, sep = "")
+```
+
+```{r}
+# Tidy longitude and latitude
+db <- db %>%
+  mutate(lat = parzer::parse_lat(latitude),
+         lon = parzer::parse_lon(longitude)) %>%
+  select(-latitude, -longitude)
+
+ggplot(db, aes(x = lon, y = lat)) +
+  geom_point(alpha = 0.02)
+```
+
+```{r}
+# Tidy taxonomy
+db %>%
+  filter(region != "SH") %>%
+  mutate(species = case_when(sp_code == "OFAV" ~ "faveolata", 
+                             TRUE ~ species)) %>%
+  count(species) %>%
+  arrange(-n)
+
+codes <- db %>%
+  mutate(sp_code = str_replace_all(toupper(sp_code), fixed(" "), "")) %>%
+  distinct(sp_code) %>%
+  arrange(sp_code)
+
+# fix codes
+db <- db %>%
+  mutate(sp_code = str_replace_all(toupper(sp_code), fixed(" "), "")) %>%
+  mutate(sp_code = case_when(sp_code == "AGRA" ~ "AAGA",
+                             sp_code %in% c("AGAR.", "AGARICIA", "AGARICIASP.", "AGARICIASP") ~ "AGAR",
+                             sp_code == "ACERV" ~ "ACER",
+                             sp_code %in% c("DST0", "DSTOK") ~ "DSTO",
+                             sp_code %in% c("IPHYLLASTREA", "ISOPHYLIA?") ~ "ISOP",
+                             sp_code %in% c("MADRACIS") ~ "MADR",
+                             sp_code %in% c("MDAC") ~ "MDEC",
+                             sp_code %in% c("MMAR") ~ "MMIR",
+                             sp_code %in% c("MYC.") ~ "MYCE",
+                             sp_code %in% c("OFRA?") ~ "OFRA",
+                             sp_code %in% c("PORITES?") ~ "PORI",
+                             sp_code %in% c("PSTRI") ~ "PSTR",
+                             sp_code %in% c("SCOLYMIA") ~ "SCOL",
+                             sp_code %in% c("SSINT") ~ "SINT",
+                             sp_code %in% c("NOSAMPLEINBAG") ~ as.character(NA),
+                             TRUE ~ sp_code))
+
+codes_fixed <- db %>%
+  distinct(sp_code) %>%
+  arrange(sp_code)
+
+codes_fixed %>% print(., n = nrow(.))
+
+
+```
+
+```{r}
+# Assign genus and species names based on codes, and vice versa
+library(fuzzyjoin)
+sp_codes <- read_csv("data/sp_codes.csv")
+
+# Get genus and species names for db rows that only have codes
+f1 <- inner_join(db, sp_codes, by = "sp_code") %>%
+  mutate(genus = genus.y, species = species.y)   # keep genus and species from sp_codes.csv
+
+# Get codes for db rows that only have genus and species names (don't have codes)
+f2 <- db %>% 
+  drop_na(genus, species) %>%
+  stringdist_join(sp_codes, by = c("genus", "species"), mode = "inner") %>%
+  mutate(genus = genus.y, species = species.y, sp_code = sp_code.y) # keep info from sp_codes.csv
+
+# Join these subsets back together
+f3 <- bind_rows(f1, f2)
+
+# Get db rows that didn't make it through the above filtering and join back in
+dbf <- anti_join(db, f3, by = "sample_id") %>%
+  bind_rows(f3)
+```
+
+```{r}
+# tidy depths
+dbf <- dbf %>%
+  mutate(colony_depth_m = ifelse(is.na(colony_depth_m), colony_depth_ft * 0.3048, colony_depth_m),
+         colony_depth_ft = ifelse(is.na(colony_depth_ft), colony_depth_m / 0.3048, colony_depth_ft))
+```
+
+```{r}
+# select columns
+dbff <- dbf %>%
+  select(sample_id, sp_code, genus, species, date_sampled, time_sampled, region, site, colony_depth_m, colony_depth_ft, water_temp_c, lat, lon, gps, waypoint, collected_by, photo, colony_tag, colony_diameter_cm, colony_note1, colony_note2, sample_note1, sample_note2, tube_label, sample_location)
+
+```
+
+#write to file
+```{r}
+write_csv(dbff, "shedd_coral_db.csv")
+```
+
